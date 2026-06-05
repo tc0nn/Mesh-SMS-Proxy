@@ -1,6 +1,8 @@
 # Mesh-SMS-proxy
 
-A two-service bridge that lets **Meshtastic** mesh users send **SMS-style text messages** to the public cellular network without a dedicated SMS modem. Messages leave the mesh through a small Flask backend that delivers them via each carrier’s **email-to-SMS gateway** (SMTP). The same backend powers optional **weather lookups** for mesh bot commands.
+A multi-service bridge that lets **Meshtastic** or **MeshCore** mesh users send **SMS-style text messages** to the public cellular network without a dedicated SMS modem. Messages leave the mesh through a small Flask backend that delivers them via each carrier’s **email-to-SMS gateway** (SMTP). The same backend powers optional **weather lookups** for mesh bot commands.
+
+Pick **one mesh stack** on the gateway host (Meshtastic *or* MeshCore companion USB)—both use the same command vocabulary and email backend.
 
 Built for the **Louisiana Mesh Community** ([discord.louisianamesh.org](https://discord.louisianamesh.org)).
 
@@ -17,40 +19,46 @@ Off-grid or disaster-style mesh networks are great for local coordination, but p
 
 No Twilio account, no SIM in the server—only SMTP and knowledge of carrier gateway domains. That keeps the bar low for community operators who already have Gmail or another SMTP relay.
 
-The design also records **who sent the message** (Meshtastic node ID) and optional **GPS** from the sender’s last known position, so downstream humans can see provenance in the SMS body.
+The design also records **who sent the message** (node ID / name) and optional **GPS**, so downstream humans can see provenance in the SMS body. The email service tags each send with **`moc`**: `0` = Meshtastic, `1` = MeshCore.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────┐     serial or TCP      ┌──────────────────────────────┐
-│  Meshtastic radio   │◄──────────────────────►│ meshtastic-communication-  │
-│  (field node)       │   meshtastic Python    │ service.py (MeshBot)         │
-└─────────────────────┘   library pubsub       └──────────────┬───────────────┘
-                                                              │ HTTP POST
-                                                              │ :5000
-                                                              ▼
-                                               ┌──────────────────────────────┐
-                                               │ email-message-service.py     │
-                                               │ (Flask)                      │
-                                               │  • /send-email  → SMTP/SMS   │
-                                               │  • /get-weather → OpenWeather│
-                                               └──────────────┬───────────────┘
-                                                              │ SMTP TLS
-                                                              ▼
-                                               ┌──────────────────────────────┐
-                                               │ Carrier email-to-SMS       │
-                                               │ (AT&T, Verizon, T-Mobile, …) │
-                                               └──────────────────────────────┘
+                    ┌── meshtastic-communication-service.py
+                    │   (Meshtastic serial/TCP + pubsub)
+┌──────────────┐    │
+│ Meshtastic   │◄───┤
+│ radio        │    │         bot_logic.py (shared commands)
+└──────────────┘    │                    │
+                    │                    │ HTTP :5000
+┌──────────────┐    │                    ▼
+│ MeshCore     │◄───├── meshcore-communication-service.py
+│ companion    │    │   (USB companion framing, meshcore/)
+│ USB radio    │    │
+└──────────────┘    └──────────────┬─────────────────────────┐
+                                   ▼                         │
+                    ┌──────────────────────────────┐         │
+                    │ email-message-service.py     │         │
+                    │  • /send-email  → SMTP/SMS   │         │
+                    │  • /get-weather → OpenWeather│         │
+                    └──────────────┬───────────────┘         │
+                                   │ SMTP TLS                 │
+                                   ▼                          │
+                    ┌──────────────────────────────┐         │
+                    │ Carrier email-to-SMS gateways │         │
+                    └──────────────────────────────┘         │
 ```
 
 | Component | Role |
 |-----------|------|
-| **`meshtastic-communication-service.py`** | Long-running mesh client. Subscribes to `meshtastic.receive.text`, parses commands, sends DMs or channel broadcasts, calls the email service over HTTP. |
-| **`email-message-service.py`** | Internet-facing (or LAN) Flask app. Sends mail, resolves weather, and exposes stub hooks for Meshtastic/MeshCore IP registration. |
+| **`bot_logic.py`** | Shared command parser (`bot: sms`, `bot: weather`, help, etc.) for both stacks. |
+| **`meshtastic-communication-service.py`** | Meshtastic client via `meshtastic` Python library (USB serial or TCP). |
+| **`meshcore-communication-service.py`** | MeshCore **companion USB** client using vendored `meshcore/` protocol helpers. |
+| **`email-message-service.py`** | Flask app: SMTP SMS delivery, OpenWeather proxy, optional IP registration stubs. |
 
-The mesh bot defaults to **USB serial** (`USE_SERIAL = True`). Set `USE_SERIAL = False` and configure `TCP_HOST` to talk to a Meshtastic node over TCP instead.
+Run **one** mesh bot process per radio. Both bots talk to the same email service on port 5000.
 
 ---
 
@@ -75,7 +83,7 @@ bot: sms <phone>,, <yes|no location>,, <carrier>,, <message text>
 | Field | Description |
 |-------|-------------|
 | Phone | Destination number (digits as you would dial; no formatting enforced in code). |
-| Location | `yes` — attach sender’s last known Meshtastic position if cached; `no` — omit coordinates. |
+| Location | `yes` — attach location if available (Meshtastic: sender’s cached node position; MeshCore: bot’s advertised lat/lon); `no` — omit coordinates. |
 | Carrier | One of the supported providers (see below). |
 | Message | Free text; included in the SMS body with metadata wrapper. |
 
@@ -133,6 +141,9 @@ cp config_example.json config.json
 | `smtp_username` | SMTP login / From address. |
 | `smtp_password` | App password or SMTP credential. |
 | `openweather_api_key` | OpenWeather API key for `/get-weather`. |
+| `email_service_host` | Hostname for mesh bots to reach Flask (default `localhost`). |
+| `email_service_port` | Flask port (default `5000`). |
+| `meshcore_serial` | Serial device for MeshCore companion USB (e.g. `/dev/ttyACM0`). |
 
 Run the Flask service:
 
@@ -142,30 +153,54 @@ python3 email-message-service.py
 
 Default: Flask debug mode on port **5000**.
 
-### Mesh bot
-
-Edit constants at the top of `meshtastic-communication-service.py`:
-
-| Setting | Default | Meaning |
-|---------|---------|---------|
-| `USE_SERIAL` | `True` | USB serial to local radio; `False` for TCP. |
-| `TCP_HOST` | `localhost` | Meshtastic TCP API host when serial is off. |
-| `emailmessageservice_host` | `localhost` | Where Flask email service runs. |
-| `emailmessageservice_port` | `5000` | Flask port. |
-
-Install Python dependencies (minimum):
+### Dependencies
 
 ```bash
-pip install meshtastic pubsub requests flask
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Run the mesh bot (after the email service is up):
+### Meshtastic mesh bot
+
+Environment (optional overrides):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MESHTASTIC_USE_SERIAL` | `1` | USB serial; set `0` for TCP. |
+| `MESHTASTIC_TCP_HOST` | `localhost` | Meshtastic TCP API host. |
+| `EMAIL_SERVICE_HOST` | `localhost` | Flask email service host. |
+| `EMAIL_SERVICE_PORT` | `5000` | Flask port. |
 
 ```bash
 python3 meshtastic-communication-service.py
 ```
 
-On start it prints the connected node long name and node ID, then blocks listening for packets.
+On start it prints the connected node long name and node ID, then listens for packets.
+
+### MeshCore mesh bot
+
+Requires **companion USB** firmware (binary framing), not Room Server text CLI.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MESHCORE_SERIAL` | `/dev/ttyACM0` | USB serial port to the radio. |
+| `MESHCORE_BAUD` | `115200` | Serial baud rate. |
+| `EMAIL_SERVICE_HOST` | `localhost` | Flask email service host. |
+| `EMAIL_SERVICE_PORT` | `5000` | Flask port. |
+
+Or set `meshcore_serial` in `config.json`.
+
+```bash
+python3 meshcore-communication-service.py
+```
+
+Direct messages are routed using sender label + pubkey prefix (e.g. `AE5TC 326A`). SMS payloads use `moc=1` and include MeshCore identity in the email body.
+
+**Typical gateway layout**
+
+1. `python3 email-message-service.py` (always on, port 5000)
+2. **Either** `meshtastic-communication-service.py` **or** `meshcore-communication-service.py` (one radio, one bot)
 
 ---
 
@@ -177,20 +212,25 @@ On start it prints the connected node long name and node ID, then blocks listeni
 | `POST` | `/send-email` | `phone_number`, `message`, `device_id`, `gps_x`, `gps_y`, `moc`, `celluar_provider` | `200` on SMTP success. |
 | `POST` | `/get-weather` | `zipcode` (0 = use GPS), `gps_x`, `gps_y` | OpenWeather JSON or error. |
 | `POST` | `/connect-meshtastic` | `meshtastic_ip` | Registers client IP (global stub for future use). |
-| `POST` | `/connect-meshcore` | `meshcore_ip` | Registers MeshCore client IP (stub; `moc=1` path not wired in mesh bot yet). |
+| `POST` | `/connect-meshcore` | `meshcore_ip` | Registers MeshCore client IP (stub for future use). |
 
-The mesh bot only uses `/send-email` and `/get-weather` today.
+Both mesh bots use `/send-email` (with `moc` `0` or `1`) and `/get-weather`.
 
 ---
 
 ## Location handling
 
-For weather and optional SMS location:
+**Meshtastic**
 
-1. The bot looks up `interface.nodes[sender_id]` for a cached `position` (`latitudeI` / `longitudeI` in 1e-7 degree integers).
-2. If missing, it may call `interface.sendPosition(destinationId=sender_id)` to request an update (weather path); SMS may proceed with `0,0` if nothing is cached yet.
+1. Looks up `interface.nodes[sender_id]` for cached `position` (`latitudeI` / `longitudeI`).
+2. If missing on weather requests, sends `sendPosition` to the remote node and asks the user for a zip code.
 
-Operators should expect **best-effort** GPS—not real-time tracking unless nodes recently reported position.
+**MeshCore**
+
+1. Uses the **gateway radio’s** advertised lat/lon from companion `SELF_INFO` when location is requested (per-node GPS cache is not implemented yet).
+2. Weather without zip: same coordinates, or prompt to use `bot: weather 70112`.
+
+Operators should expect **best-effort** GPS—not real-time tracking.
 
 ---
 
@@ -205,22 +245,15 @@ Operators should expect **best-effort** GPS—not real-time tracking unless node
 
 ---
 
-## MeshCore note
-
-The email service accepts `moc` (`0` = Meshtastic, `1` = MeshCore) and exposes `/connect-meshcore`, but **`meshtastic-communication-service.py` is Meshtastic-only** today. A MeshCore-facing client would mirror the HTTP calls to `/send-email` with `moc: "1"`.
-
----
-
 ## Project status
 
 This repository is an **early community tool**, not a polished product:
 
-- README and packaging are minimal; configuration is mostly inline constants plus `config.json`.
-- Some code paths contain typos (`elf.send_dm`, `tine.sleep`) that will break specific branches until fixed.
+- Configuration is `config.json` plus environment variables; Flask runs with `debug=True` by default.
+- MeshCore per-sender GPS is not implemented (uses gateway advert coordinates).
 - Zip-based weather geocoding uses OpenWeather’s geo API with a numeric zip as `q=`—behavior may be imperfect outside supported regions.
-- Flask runs with `debug=True` in the entrypoint—disable for production.
 
-Despite that, the **core idea is clear**: a lightweight mesh command bot plus an SMTP shim to reach phones when the internet is available at the gateway.
+The **core idea**: shared `bot_logic.py` command handling, stack-specific mesh adapters, and one SMTP shim to reach phones when the internet is available at the gateway.
 
 ---
 

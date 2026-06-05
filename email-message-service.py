@@ -132,7 +132,12 @@ def send_email():
     else:
         gps_combined = f"{gps_x}, {gps_y}"
 
-    sendmessage = (f"This is a message sent by the SMS Proxy Service provided by the Louisiana Mesh Community. \n \n Device Info: \n Device ID: {device_id} - {moc} \n GPS: {gps_combined} \n \n \n Message: {message}")
+    mesh_label = "MeshCore" if str(moc) == "1" else "Meshtastic"
+    sendmessage = (
+        "This is a message sent by the SMS Proxy Service provided by the Louisiana Mesh Community.\n\n"
+        f"Device Info:\nDevice ID: {device_id}\nMesh: {mesh_label} (moc={moc})\nGPS: {gps_combined}\n\n"
+        f"Message: {message}"
+    )
 
     if celluar_provider.lower() == "at&t":
         recipient = f"{phone_number}@txt.att.net" # Assuming 'att' prefix was a typo

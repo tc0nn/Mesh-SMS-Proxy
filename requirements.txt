@@ -1,0 +1,10 @@
+# Email / weather backend
+flask>=3.0.0
+requests>=2.31.0
+
+# Meshtastic mesh bot (meshtastic-communication-service.py)
+meshtastic>=2.3.0
+pypubsub>=4.0.0
+
+# MeshCore mesh bot (meshcore-communication-service.py)
+pyserial>=3.5

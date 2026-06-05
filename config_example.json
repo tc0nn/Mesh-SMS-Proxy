@@ -3,5 +3,8 @@
     "smtp_port": 587,
     "smtp_username": "######",
     "smtp_password": "###########",
-    "openweather_api_key": "###########"
+    "openweather_api_key": "###########",
+    "email_service_host": "localhost",
+    "email_service_port": 5000,
+    "meshcore_serial": "/dev/ttyACM0"
 }
