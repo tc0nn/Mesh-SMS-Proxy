@@ -1,2 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+venv/
+.venv/
+env/
 
+# Secrets / local config (use config_example.json)
 config.json
+.env
+.env.*
+
+# Cursor / IDE (local rules, hooks, agent state)
+.cursor/
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
