@@ -25,25 +25,26 @@ The design also records **who sent the message** (node ID / name) and optional *
 
 ## Architecture
 
-```
-  ┌──────────────┐      ┌────────────────────────────────────────┐
-  │  Meshtastic  │◄────►│  meshtastic-communication-service.py   │
-  │    radio     │ USB/ │           └── bot_logic.py             │
-  └──────────────┘ TCP  └────────────────────┬───────────────────┘
-                                               │
-  ┌──────────────┐      ┌────────────────────┴───────────────────┐
-  │   MeshCore   │◄────►│  meshcore-communication-service.py    │
-  │  companion   │ USB  │  (meshcore/ framing) + bot_logic.py   │
-  └──────────────┘      └────────────────────┬───────────────────┘
-                                               │  HTTP :5000
-                                               ▼
-                        ┌────────────────────────────────────────┐
-                        │       email-message-service.py         │
-                        │  /send-email  ──► SMTP ──► carrier SMS │
-                        │  /get-weather ──► OpenWeather API      │
-                        └────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph pickOne["Run one mesh bot per radio — Meshtastic or MeshCore, not both"]
+    direction TB
+    MT_RADIO["Meshtastic radio"]
+    MC_RADIO["MeshCore companion USB"]
+    MT_BOT["meshtastic-communication-service.py<br/>uses bot_logic.py"]
+    MC_BOT["meshcore-communication-service.py<br/>meshcore/ framing + bot_logic.py"]
+    MT_RADIO <-->|USB or TCP| MT_BOT
+    MC_RADIO <-->|USB serial| MC_BOT
+  end
 
-  Run one mesh bot per radio (Meshtastic *or* MeshCore), not both on one port.
+  EMAIL["email-message-service.py<br/>/send-email · /get-weather"]
+  SMTP["Carrier email-to-SMS gateways"]
+  OW["OpenWeather API"]
+
+  MT_BOT -->|HTTP :5000| EMAIL
+  MC_BOT -->|HTTP :5000| EMAIL
+  EMAIL -->|SMTP TLS| SMTP
+  EMAIL --> OW
 ```
 
 | Component | Role |
