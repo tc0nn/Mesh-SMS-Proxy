@@ -26,29 +26,24 @@ The design also records **who sent the message** (node ID / name) and optional *
 ## Architecture
 
 ```
-                    ┌── meshtastic-communication-service.py
-                    │   (Meshtastic serial/TCP + pubsub)
-┌──────────────┐    │
-│ Meshtastic   │◄───┤
-│ radio        │    │         bot_logic.py (shared commands)
-└──────────────┘    │                    │
-                    │                    │ HTTP :5000
-┌──────────────┐    │                    ▼
-│ MeshCore     │◄───├── meshcore-communication-service.py
-│ companion    │    │   (USB companion framing, meshcore/)
-│ USB radio    │    │
-└──────────────┘    └──────────────┬─────────────────────────┐
-                                   ▼                         │
-                    ┌──────────────────────────────┐         │
-                    │ email-message-service.py     │         │
-                    │  • /send-email  → SMTP/SMS   │         │
-                    │  • /get-weather → OpenWeather│         │
-                    └──────────────┬───────────────┘         │
-                                   │ SMTP TLS                 │
-                                   ▼                          │
-                    ┌──────────────────────────────┐         │
-                    │ Carrier email-to-SMS gateways │         │
-                    └──────────────────────────────┘         │
+  ┌──────────────┐      ┌────────────────────────────────────────┐
+  │  Meshtastic  │◄────►│  meshtastic-communication-service.py   │
+  │    radio     │ USB/ │           └── bot_logic.py             │
+  └──────────────┘ TCP  └────────────────────┬───────────────────┘
+                                               │
+  ┌──────────────┐      ┌────────────────────┴───────────────────┐
+  │   MeshCore   │◄────►│  meshcore-communication-service.py    │
+  │  companion   │ USB  │  (meshcore/ framing) + bot_logic.py   │
+  └──────────────┘      └────────────────────┬───────────────────┘
+                                               │  HTTP :5000
+                                               ▼
+                        ┌────────────────────────────────────────┐
+                        │       email-message-service.py         │
+                        │  /send-email  ──► SMTP ──► carrier SMS │
+                        │  /get-weather ──► OpenWeather API      │
+                        └────────────────────────────────────────┘
+
+  Run one mesh bot per radio (Meshtastic *or* MeshCore), not both on one port.
 ```
 
 | Component | Role |
